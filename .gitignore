@@ -1,0 +1,6 @@
+target/
+*.class
+*.log
+!src/**/*.log
+.hg/
+.svn/
