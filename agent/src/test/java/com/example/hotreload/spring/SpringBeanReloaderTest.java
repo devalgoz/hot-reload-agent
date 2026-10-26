@@ -38,37 +38,37 @@ class SpringBeanReloaderTest {
 
     @Test
     void isSpringBeanRecognizesService() throws Exception {
-        assertTrue(isSpringBean(MyService.class));
+        assertTrue(isSpringManagedBean(MyService.class));
     }
 
     @Test
     void isSpringBeanRecognizesController() throws Exception {
-        assertTrue(isSpringBean(MyController.class));
+        assertTrue(isSpringManagedBean(MyController.class));
     }
 
     @Test
     void isSpringBeanRecognizesRepository() throws Exception {
-        assertTrue(isSpringBean(MyRepository.class));
+        assertTrue(isSpringManagedBean(MyRepository.class));
     }
 
     @Test
     void isSpringBeanRecognizesComponent() throws Exception {
-        assertTrue(isSpringBean(MyComponent.class));
+        assertTrue(isSpringManagedBean(MyComponent.class));
     }
 
     @Test
     void isSpringBeanRejectsPlainClass() throws Exception {
-        assertFalse(isSpringBean(NotABean.class));
+        assertFalse(isSpringManagedBean(NotABean.class));
     }
 
     @Test
     void isSpringBeanRejectsNull() throws Exception {
-        assertFalse(isSpringBean(null));
+        assertFalse(isSpringManagedBean(null));
     }
 
     // isSpringBean is private — invoke via reflection.
-    private boolean isSpringBean(Class<?> clazz) throws Exception {
-        Method method = SpringBeanReloader.class.getDeclaredMethod("isSpringBean", Class.class);
+    private boolean isSpringManagedBean(Class<?> clazz) throws Exception {
+        Method method = SpringBeanReloader.class.getDeclaredMethod("isSpringManagedBean", Class.class);
         method.setAccessible(true);
         try {
             return (Boolean) method.invoke(new SpringBeanReloader(), clazz);

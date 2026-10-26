@@ -11,38 +11,45 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
 import org.springframework.stereotype.Component;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
 import java.nio.file.Path;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Arrays;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Spring integration for transparent structural hot-swapping.
  *
  * Implements {@link BeanPostProcessor} so that after Spring creates any bean,
- * we wrap it in a {@link HotSwapProxy} (if it has interfaces). The proxy is
- * registered with {@link StructuralHotSwapManager} and returned to Spring
- * instead of the raw bean. All injection points receive the proxy.
+ * we wrap it in a {@link HotSwapProxy}. The proxy is registered with
+ * {@link StructuralHotSwapManager} and returned to Spring instead of the raw
+ * bean. All injection points receive the proxy.
+ *
+ * Two proxy strategies are used:
+ *   <ul>
+ *     <li><b>JDK dynamic proxy</b> — for beans that implement interfaces.</li>
+ *     <li><b>ByteBuddy subclass proxy</b> — for beans without interfaces
+ *       (uses {@link HotSwapProxy#create(Object, Class[])} with no interfaces).</li>
+ *   </ul>
  *
  * On structural swap, {@link StructuralHotSwapManager} updates the proxy's
  * current instance. All existing proxy holders transparently see the new
  * version — achieving indirection-based transparency without JVMTI.
  *
  * Limitations:
- *   - Only interface-based beans can be proxied (JDK dynamic proxy).
- *   - Classes without interfaces cannot be proxied this way (would need
- *     CGLIB/ByteBuddy subclass proxy).
  *   - Direct field access on the target object bypasses the proxy.
  *   - Identity checks (==) compare the proxy, not the underlying instance.
- *   - True heap-level transparency requires native JVMTI (JRebel's approach).
+ *   - Final methods cannot be intercepted by ByteBuddy subclass proxies.
+ *   - True heap-level transparency requires native JVMTI.
  */
 @Component
-public class SpringStructuralIntegration implements ApplicationContextAware, BeanPostProcessor, StructuralHotSwapManager.StructuralSwapListener {
+public class SpringStructuralIntegration implements ApplicationContextAware, BeanPostProcessor, StructuralSwapListener {
 
     private ConfigurableListableBeanFactory beanFactory;
     private Path classDir;
 
-    /** Tracks beanName -> interfaces for proxy creation. */
+    /** Tracks beanName -> interfaces (empty array means subclass proxy). */
     private final Map<String, Class<?>[]> beanInterfaces = new ConcurrentHashMap<>();
 
     @Override
@@ -70,7 +77,8 @@ public class SpringStructuralIntegration implements ApplicationContextAware, Bea
 
     /**
      * BeanPostProcessor: after Spring creates a bean, wrap it in a HotSwapProxy
-     * (if it has interfaces) and register the proxy for transparent updates.
+     * (JDK dynamic proxy if interfaces exist, ByteBuddy subclass proxy
+     * otherwise) and register the proxy for transparent updates.
      */
     @Override
     public Object postProcessAfterInitialization(Object bean, String beanName) throws BeansException {
@@ -87,17 +95,19 @@ public class SpringStructuralIntegration implements ApplicationContextAware, Bea
             return bean;
         }
 
-        // Get all interfaces implemented by the bean.
-        Class<?>[] interfaces = beanClass.getInterfaces();
-        if (interfaces.length == 0) {
-            // Cannot proxy a class without interfaces using JDK dynamic proxy.
+        // Skip beans that are already proxies (avoid double-wrapping).
+        if (bean instanceof com.example.hotreload.structural.HotSwapProxy) {
             return bean;
         }
 
-        // Store interfaces for potential re-proxying.
+        // Get all interfaces implemented by the bean.
+        Class<?>[] interfaces = beanClass.getInterfaces();
+
+        // Store proxy type info for potential re-proxying.
         beanInterfaces.put(beanName, interfaces);
 
-        // Wrap in HotSwapProxy.
+        // Wrap in HotSwapProxy — uses JDK dynamic proxy if interfaces exist,
+        // ByteBuddy subclass proxy otherwise.
         HotSwapProxy proxy = HotSwapProxy.create(bean, interfaces);
 
         // Register with StructuralHotSwapManager for transparent updates.
@@ -106,11 +116,13 @@ public class SpringStructuralIntegration implements ApplicationContextAware, Bea
             manager.registerProxy(beanName, proxy, beanClass.getName());
         }
 
-        System.out.println("[SpringStructuralIntegration] Wrapped bean in HotSwapProxy: "
-                + beanName + " -> " + beanClass.getName()
-                + " (interfaces: " + String.join(", ",
-                java.util.Arrays.stream(interfaces).map(Class::getSimpleName)
-                .toArray(String[]::new)) + ")");
+        String proxyType = proxy.isSubclassProxy() ? "ByteBuddy subclass" : "JDK dynamic";
+        System.out.println("[SpringStructuralIntegration] Wrapped bean in " + proxyType
+                + " HotSwapProxy: " + beanName + " -> " + beanClass.getName()
+                + (interfaces.length > 0
+                ? " (interfaces: " + String.join(", ",
+                Arrays.stream(interfaces).map(Class::getSimpleName).toArray(String[]::new)) + ")"
+                : " (no interfaces — subclass proxy)"));
 
         return proxy.getProxy();
     }
@@ -118,7 +130,7 @@ public class SpringStructuralIntegration implements ApplicationContextAware, Bea
     /**
      * Listener notified when a structural swap completes. The proxy registry
      * in StructuralHotSwapManager already updated all proxies, so this is
-     * mostly for logging / Spring singleton bookkeeping.
+     * mostly for Spring singleton bookkeeping (re-register updated proxy).
      */
     @Override
     public void onStructuralSwapped(String className, Object newInstance,
@@ -127,8 +139,6 @@ public class SpringStructuralIntegration implements ApplicationContextAware, Bea
             return;
         }
 
-        // Find beans wrapped in proxies for this class and re-register as
-        // singletons so Spring's getBean() returns the updated proxy.
         StructuralHotSwapManager manager = HotReloadAgent.getStructuralSwapManager();
         if (manager == null) {
             return;
@@ -140,7 +150,8 @@ public class SpringStructuralIntegration implements ApplicationContextAware, Bea
             Object current = proxy.getCurrentInstance();
 
             if (current != null && current.getClass().getName().equals(className)) {
-                // Re-register the (updated) proxy as the singleton.
+                // Re-register the (updated) proxy as the singleton so that
+                // Spring's getBean() returns the updated proxy.
                 try {
                     org.springframework.beans.factory.support.DefaultListableBeanFactory dlbf =
                             (org.springframework.beans.factory.support.DefaultListableBeanFactory) beanFactory;

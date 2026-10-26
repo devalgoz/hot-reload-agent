@@ -79,9 +79,9 @@ class HotSwapProxyTest {
     void invokeWithNullInstanceThrows() throws Exception {
         // The constructor is private; use reflection to create with null target.
         java.lang.reflect.Constructor<HotSwapProxy> ctor =
-                HotSwapProxy.class.getDeclaredConstructor(Object.class);
+                HotSwapProxy.class.getDeclaredConstructor(Object.class, boolean.class);
         ctor.setAccessible(true);
-        HotSwapProxy proxy = ctor.newInstance((Object) null);
+        HotSwapProxy proxy = ctor.newInstance((Object) null, false);
         // invoke() declares throws Throwable, so the lambda can throw directly.
         assertThrows(IllegalStateException.class, () ->
                 proxy.invoke(null, Greeter.class.getMethod("greet", String.class),
