@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.example.hotreload</groupId>
+        <artifactId>hot-reload-agent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>intellij-plugin</artifactId>
+    <packaging>jar</packaging>
+    <name>Hot-Reload IntelliJ Plugin</name>
+    <description>IntelliJ Platform plugin for hot-reloading classes</description>
+
+    <properties>
+        <intellij.plugin.id>com.example.hotreload</intellij.plugin.id>
+        <intellij.plugin.version>1.0.0-SNAPSHOT</intellij.plugin.version>
+    </properties>
+
+    <repositories>
+        <repository>
+            <id>jetbrains</id>
+            <name>JetBrains Repository</name>
+            <url>https://www.jetbrains.com/intellij-repository/releases</url>
+        </repository>
+    </repositories>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.intellij</groupId>
+            <artifactId>platform</artifactId>
+            <version>${intellij.platform.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.example.hotreload</groupId>
+            <artifactId>agent</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.jetbrains.intellij.plugins</groupId>
+                <artifactId>gradle-intellij-plugin</artifactId>
+                <version>1.17.0</version>
+                <configuration>
+                    <pluginName>${intellij.plugin.id}</pluginName>
+                    <version>${intellij.plugin.version}</version>
+                    <sinceBuild>241</sinceBuild>
+                    <untilBuild>242.*</untilBuild>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

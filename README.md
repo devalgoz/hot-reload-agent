@@ -15,38 +15,58 @@ without restarting the application. Includes targeted reloaders for:
 hot-reload-agent/
 ├── pom.xml
 ├── README.md
-├── src/main/java/com/example/hotreload/
-│   ├── HotReloadAgent.java              # JVM agent entry (premain + agentmain)
-│   ├── HotReloadClassFileTransformer.java
-│   ├── ReloadService.java               # Watches target/classes for .class changes
-│   ├── HotReloadClassFileTransformer.java
-│   ├── spring/
-│   │   ├── SpringBeanReloader.java      # Evicts + recreates Spring beans
-│   │   ├── SpringConfigReloader.java    # Reloads application.properties
-│   │   ├── SpringAgentIntegration.java  # @Component: wires Spring reloaders
-│   │   └── SpringStructuralIntegration.java # @Component + BeanPostProcessor
-│   ├── hibernate/
-│   │   ├── HibernateAgentIntegration.java # @Component: wires SessionFactory
-│   │   └── HibernateEntityReloader.java # Evicts @Entity from cache
-│   ├── spring/
-│   │   ├── SpringAgentIntegration.java  # @Component: wires Spring beans
-│   │   ├── SpringConfigReloader.java
-│   │   └── SpringBeanReloader.java
-│   ├── structural/
-│   │   ├── StructuralClassLoader.java   # Custom URLClassLoader for isolated versions
-│   │   ├── StructuralHotSwapManager.java # Orchestrates structural hot-swap
-│   │   ├── HotSwapProxy.java            # Indirection proxy for transparent reload
-│   │   └── ByteBuddyClassRewriter.java   # Bytecode transformation helper
-│   ├── instrument/
-│   │   ├── HotReloadDispatcher.java     # Runtime dispatch for bytecode-instrumented calls
-│   │   ├── ByteBuddyAgentTransformer.java # Installs ByteBuddy AgentBuilder
-│   │   ├── ClassFileInstrumenter.java   # Build-time bytecode instrumentation
-│   │   └── InstrumentingMethodVisitor.java # ASM transformer for .class files
-│   ├── remote/
-│   │   └── RemoteAttachClient.java      # Dynamically attach agent to a running JVM
-│   └── build/
-│       └── SourceCompileWatcher.java    # Auto-compiles .java on change into watched dir
-├── src/native/jvmti_agent.c             # Native JVMTI agent (C)
+├── agent/                          # Core Java agent (packaging: jar)
+│   ├── pom.xml
+│   ├── src/main/java/com/example/hotreload/
+│   │   ├── HotReloadAgent.java              # JVM agent entry (premain + agentmain)
+│   │   ├── HotReloadClassFileTransformer.java
+│   │   ├── ReloadService.java               # Watches target/classes for .class changes
+│   │   ├── HotReloadClassFileTransformer.java
+│   │   ├── spring/
+│   │   │   ├── SpringBeanReloader.java      # Evicts + recreates Spring beans
+│   │   │   ├── SpringConfigReloader.java    # Reloads application.properties
+│   │   │   ├── SpringAgentIntegration.java  # @Component: wires Spring reloaders
+│   │   │   └── SpringStructuralIntegration.java # @Component + BeanPostProcessor
+│   │   ├── hibernate/
+│   │   │   ├── HibernateAgentIntegration.java # @Component: wires SessionFactory
+│   │   │   └── HibernateEntityReloader.java # Evicts @Entity from cache
+│   │   ├── structural/
+│   │   │   ├── StructuralClassLoader.java   # Custom URLClassLoader for isolated versions
+│   │   │   ├── StructuralHotSwapManager.java # Orchestrates structural hot-swap
+│   │   │   ├── HotSwapProxy.java            # Indirection proxy for transparent reload
+│   │   │   └── ByteBuddyClassRewriter.java   # Bytecode transformation helper
+│   │   ├── instrument/
+│   │   │   ├── HotReloadDispatcher.java     # Runtime dispatch for bytecode-instrumented calls
+│   │   │   ├── ByteBuddyAgentTransformer.java # Installs ByteBuddy AgentBuilder
+│   │   │   ├── ClassFileInstrumenter.java   # Build-time bytecode instrumentation
+│   │   │   └── InstrumentingMethodVisitor.java # ASM transformer for .class files
+│   │   ├── remote/
+│   │   │   └── RemoteAttachClient.java      # Dynamically attach agent to a running JVM
+│   │   └── build/
+│   │       └── SourceCompileWatcher.java    # Auto-compiles .java on change into watched dir
+│   ├── src/native/jvmti_agent.c             # Native JVMTI agent (C)
+│   └── src/test/...                         # 31 tests across 8 classes
+├── maven-plugin/                          # Maven plugin for hot-reload
+│   ├── pom.xml
+│   └── src/main/java/com/example/hotreload/maven/plugin/
+│       ├── AttachMojo.java      # Attaches agent to running JVM by PID
+│       └── WatchMojo.java       # Watches sources and auto-compiles on change
+├── gradle-plugin/                        # Gradle plugin for hot-reload
+│   ├── pom.xml
+│   └── src/main/java/com/example/hotreload/gradle/plugin/
+│       └── HotReloadPlugin.java  # Gradle plugin with hotReloadWatch / hotReloadAttach tasks
+├── intellij-plugin/                       # IntelliJ plugin skeleton
+│   ├── pom.xml
+│   ├── src/main/resources/META-INF/plugin.xml
+│   └── src/main/java/com/example/hotreload/intellij/HotReloadAction.java
+├── eclipse-plugin/                        # Eclipse plugin skeleton
+│   ├── pom.xml
+│   ├── src/main/resources/META-INF/MANIFEST.MF
+│   ├── src/main/resources/plugin.xml
+│   └── src/main/java/com/example/hotreload/eclipse/
+│       ├── HotReloadActivator.java
+│       ├── HotReloadAction.java
+│       └── HotReloadBuilder.java
 └── target/
     ├── hot-reload-agent-1.0.0-SNAPSHOT.jar  # Built agent jar
     └── libjvmti_agent.so                  # Built native JVMTI agent
@@ -136,6 +156,85 @@ java -cp target/hot-reload-agent-1.0.0-SNAPSHOT.jar:target/classes \
 
 Now edit any `.java` file → it auto-compiles → `ReloadService` detects the
 new `.class` → the class is hot-reloaded into the running JVM.
+
+---
+
+## Build tool plugins
+
+### Maven plugin
+
+The `hot-reload-maven-plugin` provides two goals:
+
+**Attach to a running JVM:**
+```bash
+mvn com.example.hotreload:hot-reload-maven-plugin:1.0.0-SNAPSHOT:attach \
+  -DhotReload.pid=12345 \
+  -DhotReload.agentJar=agent/target/agent-1.0.0-SNAPSHOT.jar \
+  -DhotReload.watchDir=agent/target/classes
+```
+
+**Watch sources and auto-compile on change:**
+```bash
+mvn com.example.hotreload:hot-reload-maven-plugin:1.0.0-SNAPSHOT:watch \
+  -DhotReload.sourceDir=agent/src/main/java \
+  -DhotReload.outputDir=agent/target/classes
+```
+
+### Gradle plugin
+
+Apply the plugin in your `build.gradle`:
+
+```groovy
+plugins {
+    id 'java'
+    id 'com.example.hotreload' version '1.0.0-SNAPSHOT'
+}
+```
+
+Tasks:
+
+```bash
+# Watch Java sources and auto-compile on change
+./gradlew hotReloadWatch
+
+# Attach agent to a running JVM
+./gradlew hotReloadAttach \
+  -PhotReload.pid=12345 \
+  -PhotReload.agentJar=../agent/target/agent-1.0.0-SNAPSHOT.jar \
+  -PhotReload.watchDir=build/classes/java/main
+```
+
+---
+
+## IDE plugins
+
+### IntelliJ IDEA plugin (skeleton)
+
+The `intellij-plugin` module provides an IntelliJ Platform plugin skeleton with a
+"Compile and Hot-Reload" action bound to `Ctrl+Shift+R`.
+
+**To build and install:**
+1. Open `intellij-plugin/` in IntelliJ IDEA
+2. Build the plugin via Gradle (`gradle-intellij-plugin` is configured)
+3. Install the produced `.zip` plugin into IntelliJ
+
+The action triggers compilation via `CompilerManager`. Wiring it to push compiled
+class bytes to a running agent is left as an integration step.
+
+### Eclipse plugin (skeleton)
+
+The `eclipse-plugin` module provides an Eclipse plugin skeleton with:
+- `HotReloadActivator` — plugin lifecycle
+- `HotReloadAction` — "Compile and Hot-Reload" action on the Build menu
+- `HotReloadBuilder` — incremental builder that detects changed `.java` files
+
+**To build and install:**
+1. Import `eclipse-plugin/` into Eclipse as an existing Maven project
+2. Build with Maven or Tycho
+3. Deploy the produced JAR to your Eclipse `dropins/` folder
+
+Wiring the builder to push compiled class bytes to a running agent is left as
+an integration step.
 
 ---
 
@@ -234,15 +333,16 @@ The JVMTI agent is **optional** — the agent works without it using only
 | Hibernate entities | ✅ Evict from 2nd-level/collection caches | Remap `@Entity` fields/associations (needs SessionFactory rebuild) |
 | JDK classes | ❌ Never reloaded | — |
 | Remote servers | ⚠️ Local dynamic attach via `RemoteAttachClient` (JVM PID); no remote over SSH/HTTP | — |
-| Build / IDE integration | ⚠️ `SourceCompileWatcher` auto-compiles `.java` on change into the watched dir; no IntelliJ/Eclipse plugin | — |
+| Build / IDE integration | ⚠️ Maven + Gradle plugins available; `SourceCompileWatcher` auto-compiles `.java`; IntelliJ/Eclipse plugin skeletons exist but need IDE SDK to build | — |
 
 ## Next steps to make it production-grade
 
-1. **IDE plugin** — IntelliJ/Eclipse plugin that compiles on save and pushes
-   class bytes to the agent. (`SourceCompileWatcher` covers the CLI-based
-   auto-compile case, but an IDE plugin is still missing.)
-2. **Maven/Gradle plugin** — bind `mvn compile` / `gradle compile` to the
-   watcher instead of running `SourceCompileWatcher` as a separate process.
+1. **IDE plugin completion** — IntelliJ/Eclipse plugin skeletons exist; wire them
+   to push compiled class bytes to a running agent and build with the respective
+   IDE SDK.
+2. **Maven/Gradle plugin completion** — plugins exist with `attach` and `watch`
+   goals/tasks; tighter integration with `compile` phase (auto-trigger reload on
+   successful compilation) is still pending.
 3. **ByteBuddy programmatic rewrite** — wire `ByteBuddyClassRewriter` to
    generate structural changes programmatically without javac.
 4. **CGLIB proxy support** — currently only interface-based beans can be

@@ -1,0 +1,15 @@
+Manifest-Version: 1.0
+Bundle-ManifestVersion: 2
+Bundle-Name: Hot-Reload Agent Eclipse Plugin
+Bundle-SymbolicName: com.example.hotreload.eclipse
+Bundle-Version: 1.0.0.qualifier
+Bundle-Activator: com.example.hotreload.eclipse.HotReloadActivator
+Bundle-RequiredExecutionEnvironment: JavaSE-17
+Bundle-Vendor: Example
+Require-Bundle: org.eclipse.core.runtime,
+ org.eclipse.core.resources,
+ org.eclipse.core.expressions,
+ org.eclipse.ui.ide,
+ org.eclipse.jdt.core,
+ org.eclipse.jdt.ui,
+ org.eclipse.debug.core

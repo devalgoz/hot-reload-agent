@@ -4,3 +4,25 @@ target/
 !src/**/*.log
 .hg/
 .svn/
+
+# IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+.settings/
+.classpath
+.project
+.factorypath
+
+# Eclipse plugin
+bin/
+.eclipse/
+
+# Gradle
+.gradle/
+gradlew
+gradlew.bat
+
+# OS
+.DS_Store
