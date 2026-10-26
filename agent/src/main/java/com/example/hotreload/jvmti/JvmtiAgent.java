@@ -37,6 +37,12 @@ public class JvmtiAgent {
     /** Native: get all loaded classes */
     public static native java.util.List<Class<?>> getAllClasses();
 
+    /** Native: get the number of heap instances of a class */
+    public static native int getInstanceCount(Class<?> clazz);
+
+    /** Native: suggest garbage collection (helps reclaim old classloaders) */
+    public static native void forceGC();
+
     /** Native: cleanup */
     public static native void destroy();
 

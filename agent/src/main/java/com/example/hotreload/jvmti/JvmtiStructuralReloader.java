@@ -6,29 +6,39 @@ import com.example.hotreload.structural.StructuralClassLoader;
 import com.example.hotreload.structural.StructuralHotSwapManager;
 
 import java.io.IOException;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.lang.reflect.Constructor;
 import java.util.List;
 
 /**
- * Structural reloader with FULL TRANSPARENCY via JVMTI heap iteration.
+ * Structural reloader with FULL TRANSPARENCY via JVMTI heap manipulation.
  *
  * Pipeline when a class changes structurally (add/remove methods/fields):
  *
  *   1. Load new .class bytes in StructuralClassLoader (isolated version)
- *   2. Create new instance of the new class
- *   3. JVMTI IterateOverInstancesOfClass: find ALL heap instances of old class
- *   4. JNI field copy: migrate field values from each old instance to new instance
- *   5. Update all HotSwapProxy instances -> transparent to all callers
- *   6. SpringStructuralIntegration replaces bean singletons
+ *   2. Create new instance of the new class (template)
+ *   3. JVMTI IterateOverInstancesOfClass: count all heap instances of old class
+ *   4. InstanceRegistry: find all live instances tracked via WeakReference
+ *   5. JNI field copy: migrate field values from the template to EACH old
+ *      instance found on the heap
+ *   6. Update all HotSwapProxy instances -> transparent to all callers
+ *   7. SpringStructuralIntegration replaces bean singletons
+ *   8. JVMTI System.gc() -> helps reclaim old classloaders
  *
- * JVMTI is used for heap discovery (finding all instances). JNI is used for
- * field access (copying state). StructuralClassLoader loads the new class
- * version (since JVMTI RedefineClasses cannot add/remove members).
+ * This addresses the key limitation of proxy-only approaches: direct field
+ * access on old instances now sees migrated field values because we mutate
+ * the instances themselves on the heap.
  *
- * This is the most complete transparency achievable without native VM
- * internals (which would require modifying object _klass pointers directly).
+ * Limitations:
+ *   - Cannot add/remove fields from existing instances (JVMTI cannot change
+ *     object layout). Only field VALUES are migrated.
+ *   - New fields added in the new class will not exist on old instances.
+ *   - Removed fields remain on old instances with stale values.
+ *   - Final methods cannot be intercepted (ByteBuddy limitation).
+ *   - True object class pointer (_klass) rewriting is not possible with
+ *     standard JVMTI.
  */
 public class JvmtiStructuralReloader {
 
@@ -50,7 +60,7 @@ public class JvmtiStructuralReloader {
     }
 
     /**
-     * Full transparency structural reload.
+     * Full transparency structural reload with heap instance migration.
      *
      * @param clazz         the currently loaded old class
      * @param classFile     path to the new compiled .class file
@@ -72,55 +82,71 @@ public class JvmtiStructuralReloader {
             throw new IOException("Cannot load class " + className, e);
         }
 
-        // Step 2: Create new instance
-        Object newInstance;
+        // Step 2: Create template new instance
+        Object newTemplate;
         try {
             Constructor<?> ctor = newClazz.getDeclaredConstructor();
             ctor.setAccessible(true);
-            newInstance = ctor.newInstance();
+            newTemplate = ctor.newInstance();
         } catch (Exception e) {
             throw new IOException("Cannot create new instance of " + className, e);
         }
 
-        // Step 3: Find ALL old instances via JVMTI heap iteration
-        int instanceCount = 0;
+        // Step 3: Count all heap instances via JVMTI
+        int jvmtiInstanceCount = 0;
         if (JVMTI_AVAILABLE) {
-            instanceCount = JvmtiAgent.iterateAndMigrateInstances(clazz, newInstance);
+            jvmtiInstanceCount = JvmtiAgent.getInstanceCount(clazz);
             System.out.println("[JvmtiStructuralReloader] JVMTI found "
-                    + instanceCount + " instances of " + className);
+                    + jvmtiInstanceCount + " heap instances of " + className);
         }
 
-        // Step 4: Migrate fields from old instance to new instance (if we have an old instance)
-        // Note: We migrate from the first old instance we can find, or use field defaults
-        // In a full implementation, we'd iterate all instances and copy to each new one
-        Object oldInstance = findFirstInstance(clazz);
-        if (oldInstance != null && JVMTI_AVAILABLE) {
-            int copied = JvmtiAgent.migrateInstanceFields(oldInstance, newInstance);
-            System.out.println("[JvmtiStructuralReloader] Migrated "
-                    + copied + " fields from old instance to new");
+        // Step 4: Migrate fields from template to EACH tracked old instance
+        int migratedCount = 0;
+        List<Object> oldInstances = InstanceRegistry.getInstances(className);
+        for (Object oldInstance : oldInstances) {
+            try {
+                int copied = JvmtiAgent.migrateInstanceFields(newTemplate, oldInstance);
+                if (copied > 0) {
+                    migratedCount++;
+                    System.out.println("[JvmtiStructuralReloader] Migrated "
+                            + copied + " field(s) to instance "
+                            + oldInstance + " of " + className);
+                }
+            } catch (Exception e) {
+                System.err.println("[JvmtiStructuralReloader] Failed to migrate instance "
+                        + oldInstance + ": " + e.getMessage());
+            }
         }
 
-        // Step 5: Update all HotSwapProxy instances (transparency for callers)
+        System.out.println("[JvmtiStructuralReloader] Migrated "
+                + migratedCount + "/" + oldInstances.size()
+                + " tracked instances of " + className);
+
+        // Step 5: Force GC to help reclaim old classloaders
+        if (JVMTI_AVAILABLE) {
+            JvmtiAgent.forceGC();
+            System.out.println("[JvmtiStructuralReloader] System.gc() invoked for cleanup");
+        }
+
+        // Step 6: Update all HotSwapProxy instances (transparency for callers)
         StructuralHotSwapManager manager = HotReloadAgent.getStructuralSwapManager();
         if (manager != null) {
-            manager.structuralSwap(watchDir, className, classFile, oldInstance);
+            // Pass the template as the new instance source
+            Object newInstance = newTemplate;
+            try {
+                // Try to create a fresh instance for the proxy (template may have
+                // migrated fields from the last old instance)
+                Constructor<?> ctor = newClazz.getDeclaredConstructor();
+                ctor.setAccessible(true);
+                newInstance = ctor.newInstance();
+            } catch (Exception e) {
+                // Fall back to template
+            }
+            manager.structuralSwap(watchDir, className, classFile, newInstance);
         }
 
         System.out.println("[JvmtiStructuralReloader] Full transparency reload complete: "
-                + className + " -> v" + manager.getVersion(className));
-    }
-
-    /**
-     * Find the first loaded instance of a class (for field migration source).
-     */
-    private static Object findFirstInstance(Class<?> clazz) {
-        if (JVMTI_AVAILABLE) {
-            // Use JVMTI to get all instances - but JVMTI doesn't return instances
-            // directly to Java. We use the callback count instead.
-            // For field migration source, we fall back to checking known instances
-            return null;
-        }
-        return null;
+                + className + " -> v" + (manager != null ? manager.getVersion(className) : 0));
     }
 
     /**

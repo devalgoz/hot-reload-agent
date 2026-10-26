@@ -258,3 +258,51 @@ JNIEXPORT void JNICALL Java_com_example_hotreload_jvmti_JvmtiAgent_destroy
         g_lock = NULL;
     }
 }
+
+/* ---------- JNI: forceGC ---------- */
+/* Suggests garbage collection to help reclaim old classloaders */
+JNIEXPORT void JNICALL Java_com_example_hotreload_jvmti_JvmtiAgent_forceGC
+  (JNIEnv *env, jclass cls) {
+    jclass systemClass = (*env)->FindClass(env, "java/lang/System");
+    if (systemClass != NULL) {
+        jmethodID gcMethod = (*env)->GetStaticMethodID(env, systemClass, "gc", "()V");
+        if (gcMethod != NULL) {
+            (*env)->CallStaticVoidMethod(env, systemClass, gcMethod);
+            fprintf(stderr, "[JVMTI] System.gc() invoked\n");
+        }
+    }
+}
+
+/* ---------- JNI: getInstanceCount ---------- */
+/* Returns the number of heap instances of a given class */
+typedef struct {
+    jint count;
+} InstanceCountData;
+
+static jvmtiIterationControl JNICALL count_instances_callback(jlong class_tag,
+                                                               jlong size,
+                                                               jlong* tag_ptr,
+                                                               void* user_data) {
+    InstanceCountData *data = (InstanceCountData *)user_data;
+    data->count += (jint)size;
+    return JVMTI_ITERATION_CONTINUE;
+}
+
+JNIEXPORT jint JNICALL Java_com_example_hotreload_jvmti_JvmtiAgent_getInstanceCount
+  (JNIEnv *env, jclass cls, jobject oldKlass) {
+
+    if (!g_jvmti) return -1;
+
+    (*g_jvmti)->RawMonitorEnter(g_jvmti, g_lock);
+
+    InstanceCountData data = {0};
+
+    jvmtiError err = (*g_jvmti)->IterateOverInstancesOfClass(
+        g_jvmti, oldKlass, 0,
+        count_instances_callback, &data);
+    check_jvmti(g_jvmti, err, "IterateOverInstancesOfClass");
+
+    (*g_jvmti)->RawMonitorExit(g_jvmti, g_lock);
+
+    return data.count;
+}

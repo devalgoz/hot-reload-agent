@@ -1,6 +1,7 @@
 package com.example.hotreload.spring;
 
 import com.example.hotreload.HotReloadAgent;
+import com.example.hotreload.jvmti.InstanceRegistry;
 import com.example.hotreload.structural.HotSwapProxy;
 import com.example.hotreload.structural.StructuralHotSwapManager;
 import com.example.hotreload.structural.StructuralHotSwapManager.StructuralSwapListener;
@@ -109,6 +110,10 @@ public class SpringStructuralIntegration implements ApplicationContextAware, Bea
         // Wrap in HotSwapProxy — uses JDK dynamic proxy if interfaces exist,
         // ByteBuddy subclass proxy otherwise.
         HotSwapProxy proxy = HotSwapProxy.create(bean, interfaces);
+
+        // Track the raw bean instance for JVMTI heap migration.
+        // This ensures direct field references to the bean see migrated values.
+        InstanceRegistry.trackInstance(bean);
 
         // Register with StructuralHotSwapManager for transparent updates.
         StructuralHotSwapManager manager = HotReloadAgent.getStructuralSwapManager();
